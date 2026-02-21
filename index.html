@@ -1199,31 +1199,23 @@
   }
 
   function sendToAPI() {
-    var apiKey = getApiKey();
+    var model = modelSelect.value;
+    var provider = getProvider(model);
+    var apiKey = getApiKey(provider);
     if (!apiKey) { showToast('API key required'); return; }
 
-    var model = modelSelect.value;
-    var isAnthropic = model.startsWith('claude');
     var msgs = buildMessages();
-
     state.isStreaming = true;
     sendBtn.disabled = true;
 
     var streamEl = addStreamingRow(model);
     var accumulated = '';
 
-    // Use Anthropic API via fetch with streaming
-    if (isAnthropic) {
-      var body = {
-        model: model,
-        max_tokens: 8192,
-        stream: true,
-        messages: msgs
-      };
+    // ── Anthropic / Claude ──
+    if (provider === 'anthropic') {
+      var body = { model: model, max_tokens: 8192, stream: true, messages: msgs };
       if (state.systemPrompt) body.system = state.systemPrompt;
-      if (state.thinking) {
-        body.thinking = { type: 'enabled', budget_tokens: 5000 };
-      }
+      if (state.thinking) body.thinking = { type: 'enabled', budget_tokens: 5000 };
 
       fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -1235,62 +1227,97 @@
         },
         body: JSON.stringify(body)
       }).then(function(res) {
-        if (!res.ok) {
-          return res.json().then(function(e) {
-            throw new Error((e.error && e.error.message) || res.statusText);
-          });
-        }
-        var reader = res.body.getReader();
-        var decoder = new TextDecoder();
-        var buffer = '';
-
+        if (!res.ok) return res.json().then(function(e) { throw new Error((e.error && e.error.message) || res.statusText); });
+        var reader = res.body.getReader(); var decoder = new TextDecoder(); var buffer = '';
         function read() {
           reader.read().then(function(result) {
-            if (result.done) {
-              finalizeStream(streamEl, accumulated, model);
-              return;
-            }
+            if (result.done) { finalizeStream(streamEl, accumulated, model); return; }
             buffer += decoder.decode(result.value, { stream: true });
-            var lines = buffer.split('\n');
-            buffer = lines.pop();
+            var lines = buffer.split('\n'); buffer = lines.pop();
             lines.forEach(function(line) {
               if (line.startsWith('data: ')) {
-                var data = line.slice(6).trim();
-                if (data === '[DONE]') return;
+                var data = line.slice(6).trim(); if (data === '[DONE]') return;
                 try {
                   var parsed = JSON.parse(data);
-                  if (parsed.type === 'content_block_delta' && parsed.delta) {
-                    if (parsed.delta.type === 'text_delta') {
-                      accumulated += parsed.delta.text;
-                      updateStreamContent(streamEl.content, accumulated, true);
-                    }
+                  if (parsed.type === 'content_block_delta' && parsed.delta && parsed.delta.type === 'text_delta') {
+                    accumulated += parsed.delta.text; updateStreamContent(streamEl.content, accumulated, true);
                   }
-                } catch(e) { /* ignore */ }
+                } catch(e) {}
               }
-            });
-            read();
-          }).catch(function(err) {
-            handleStreamError(streamEl, err.message);
-          });
-        }
-        read();
-      }).catch(function(err) {
-        handleStreamError(streamEl, err.message);
+            }); read();
+          }).catch(function(err) { handleStreamError(streamEl, err.message); });
+        } read();
+      }).catch(function(err) { handleStreamError(streamEl, err.message); });
+
+    // ── Google Gemini ──
+    } else if (provider === 'gemini') {
+      var geminiMsgs = msgs.map(function(m) {
+        return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] };
       });
-    } else {
-      // Mock for non-Anthropic models
-      showToast('Note: Only Anthropic models are natively supported. Showing demo response.');
-      var demoText = '**Demo response for ' + model + '**\n\nThis interface natively supports Anthropic models. For other models (OpenAI, Gemini), you would integrate their respective APIs with your API key.\n\nTo use a real model, select a **Claude** model from the sidebar dropdown and enter your Anthropic API key.';
-      var i = 0;
-      var interval = setInterval(function() {
-        if (i >= demoText.length) {
-          clearInterval(interval);
-          finalizeStream(streamEl, demoText, model);
-          return;
-        }
-        accumulated += demoText[i++];
-        updateStreamContent(streamEl.content, accumulated, true);
-      }, 12);
+      var geminiBody = { contents: geminiMsgs };
+      if (state.systemPrompt) geminiBody.systemInstruction = { parts: [{ text: state.systemPrompt }] };
+
+      fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':streamGenerateContent?alt=sse&key=' + apiKey, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(geminiBody)
+      }).then(function(res) {
+        if (!res.ok) return res.json().then(function(e) { throw new Error((e.error && e.error.message) || res.statusText); });
+        var reader = res.body.getReader(); var decoder = new TextDecoder(); var buffer = '';
+        function read() {
+          reader.read().then(function(result) {
+            if (result.done) { finalizeStream(streamEl, accumulated, model); return; }
+            buffer += decoder.decode(result.value, { stream: true });
+            var lines = buffer.split('\n'); buffer = lines.pop();
+            lines.forEach(function(line) {
+              if (line.startsWith('data: ')) {
+                var data = line.slice(6).trim(); if (data === '[DONE]') return;
+                try {
+                  var parsed = JSON.parse(data);
+                  var parts = parsed.candidates && parsed.candidates[0] && parsed.candidates[0].content && parsed.candidates[0].content.parts;
+                  if (parts && parts[0] && parts[0].text) {
+                    accumulated += parts[0].text; updateStreamContent(streamEl.content, accumulated, true);
+                  }
+                } catch(e) {}
+              }
+            }); read();
+          }).catch(function(err) { handleStreamError(streamEl, err.message); });
+        } read();
+      }).catch(function(err) { handleStreamError(streamEl, err.message); });
+
+    // ── OpenAI / GPT ──
+    } else if (provider === 'openai') {
+      var openaiBody = {
+        model: model, stream: true,
+        messages: state.systemPrompt ? [{ role: 'system', content: state.systemPrompt }].concat(msgs) : msgs
+      };
+      fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+        body: JSON.stringify(openaiBody)
+      }).then(function(res) {
+        if (!res.ok) return res.json().then(function(e) { throw new Error((e.error && e.error.message) || res.statusText); });
+        var reader = res.body.getReader(); var decoder = new TextDecoder(); var buffer = '';
+        function read() {
+          reader.read().then(function(result) {
+            if (result.done) { finalizeStream(streamEl, accumulated, model); return; }
+            buffer += decoder.decode(result.value, { stream: true });
+            var lines = buffer.split('\n'); buffer = lines.pop();
+            lines.forEach(function(line) {
+              if (line.startsWith('data: ')) {
+                var data = line.slice(6).trim(); if (data === '[DONE]') return;
+                try {
+                  var parsed = JSON.parse(data);
+                  var delta = parsed.choices && parsed.choices[0] && parsed.choices[0].delta;
+                  if (delta && delta.content) {
+                    accumulated += delta.content; updateStreamContent(streamEl.content, accumulated, true);
+                  }
+                } catch(e) {}
+              }
+            }); read();
+          }).catch(function(err) { handleStreamError(streamEl, err.message); });
+        } read();
+      }).catch(function(err) { handleStreamError(streamEl, err.message); });
     }
   }
 
