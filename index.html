@@ -112,7 +112,55 @@
 
         .dark-mode .message.ai .message-content {
             background-color: #2d2d2d;
-            color: #e0e0e0;
+            color: #e0e0e0 !important;
+        }
+
+        .dark-mode .message.ai .message-content * {
+            color: #e0e0e0 !important;
+        }
+
+        .dark-mode .message.ai .message-content a {
+            color: #3b82f6 !important;
+        }
+
+        .dark-mode .message.ai .message-content pre {
+            background-color: #1e1e1e !important;
+            color: #e0e0e0 !important;
+        }
+
+        .dark-mode .message.ai .message-content pre code {
+            color: #e0e0e0 !important;
+        }
+
+        /* Override Highlight.js light theme in dark mode */
+        .dark-mode .hljs {
+            background: #1e1e1e !important;
+            color: #e0e0e0 !important;
+        }
+
+        .dark-mode .hljs-string,
+        .dark-mode .hljs-attr,
+        .dark-mode .hljs-literal {
+            color: #90ee90 !important;
+        }
+
+        .dark-mode .hljs-tag,
+        .dark-mode .hljs-name {
+            color: #ff7b72 !important;
+        }
+
+        .dark-mode .hljs-attr {
+            color: #79c0ff !important;
+        }
+
+        .dark-mode .hljs-number,
+        .dark-mode .hljs-link {
+            color: #79c0ff !important;
+        }
+
+        .dark-mode pre,
+        .dark-mode code {
+            color: #e0e0e0 !important;
         }
 
         .message.user .message-content {
@@ -432,10 +480,31 @@
             cursor: pointer;
             display: none;
             color: #000;
+            padding: 12px;
         }
 
         .dark-mode .hamburger-btn {
             color: #e0e0e0;
+        }
+
+        @media (max-width: 768px) {
+            .hamburger-btn {
+                display: flex;
+                position: fixed;
+                top: 12px;
+                left: 12px;
+                z-index: 60;
+                background-color: rgba(255, 255, 255, 0.9);
+                border-radius: 6px;
+                width: 40px;
+                height: 40px;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .dark-mode .hamburger-btn {
+                background-color: rgba(30, 30, 30, 0.9);
+            }
         }
 
         .sidebar-actions {
@@ -656,14 +725,11 @@
                 height: 100vh;
                 transform: translateX(-100%);
                 box-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
+                z-index: 50;
             }
 
             .sidebar.mobile-open {
                 transform: translateX(0);
-            }
-
-            .hamburger-btn {
-                display: block;
             }
 
             .message-content {
@@ -688,6 +754,7 @@
             .chat-container {
                 padding: 12px;
                 gap: 8px;
+                padding-top: 60px;
             }
 
             .input-area {
@@ -708,6 +775,38 @@
 
         .hidden {
             display: none !important;
+        }
+
+        /* Mobile top bar */
+        .mobile-top-bar {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 50px;
+            background-color: #ffffff;
+            border-bottom: 1px solid #e5e7eb;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 0 12px;
+            z-index: 60;
+        }
+
+        .dark-mode .mobile-top-bar {
+            background-color: #1a1a1a;
+            border-bottom-color: #333;
+        }
+
+        @media (max-width: 768px) {
+            .mobile-top-bar {
+                display: flex;
+            }
+
+            .chat-container {
+                padding-top: 70px;
+            }
         }
 
         .text-sm {
@@ -787,6 +886,14 @@
     <div id="loading">Loading SolvChat...</div>
     
     <div id="root" class="hidden">
+        <!-- Mobile Top Bar (only visible on mobile) -->
+        <div class="mobile-top-bar" id="mobileTopBar">
+            <button class="hamburger-btn" id="hamburgerBtn" style="position: static; background: none; width: auto; height: auto; z-index: auto;">☰</button>
+            <div style="flex: 1;"></div>
+            <button class="icon-btn" id="darkModeBtnMobile" title="Toggle Dark Mode">🌙</button>
+            <button class="icon-btn" id="settingsBtnMobile" title="Settings">⚙️</button>
+        </div>
+
         <!-- Sidebar -->
         <div class="sidebar" id="sidebar">
             <!-- Header -->
@@ -1035,17 +1142,35 @@
             const div = document.createElement('div');
             div.innerHTML = html;
 
+            // Force text color for dark mode on all elements
+            if (appState.isDarkMode) {
+                div.style.color = '#e0e0e0';
+                div.querySelectorAll('*').forEach(el => {
+                    if (!el.classList.contains('code-copy-btn')) {
+                        el.style.color = '#e0e0e0';
+                    }
+                });
+            }
+
             // Sanitize and process elements
             div.querySelectorAll('a').forEach(link => {
                 link.setAttribute('target', '_blank');
                 link.setAttribute('rel', 'noopener noreferrer');
-                link.style.color = '#2563eb';
+                if (appState.isDarkMode) {
+                    link.style.color = '#3b82f6';
+                } else {
+                    link.style.color = '#2563eb';
+                }
                 link.style.textDecoration = 'underline';
             });
 
             // Add copy buttons to code blocks
             div.querySelectorAll('pre').forEach((pre, index) => {
                 pre.style.paddingTop = '40px';
+                if (appState.isDarkMode) {
+                    pre.style.backgroundColor = '#1e1e1e';
+                    pre.style.color = '#e0e0e0';
+                }
                 const copyBtn = document.createElement('button');
                 copyBtn.className = 'code-copy-btn';
                 copyBtn.textContent = 'Copy';
@@ -1128,6 +1253,7 @@
             appState.isDarkMode = !appState.isDarkMode;
             localStorage.setItem(APP_CONFIG.STORAGE_KEYS.DARK_MODE, appState.isDarkMode);
             applyDarkMode();
+            renderChatContainer();
         }
 
         function applyDarkMode() {
@@ -1499,6 +1625,21 @@
 
         newChatBtn.addEventListener('click', createNewChat);
         darkModeBtn.addEventListener('click', toggleDarkMode);
+
+        // Mobile buttons
+        const darkModeBtnMobile = document.getElementById('darkModeBtnMobile');
+        const settingsBtnMobile = document.getElementById('settingsBtnMobile');
+        
+        if (darkModeBtnMobile) {
+            darkModeBtnMobile.addEventListener('click', toggleDarkMode);
+        }
+        
+        if (settingsBtnMobile) {
+            settingsBtnMobile.addEventListener('click', () => {
+                loadSettings();
+                settingsModal.classList.add('active');
+            });
+        }
 
         // Settings modal
         settingsBtn.addEventListener('click', () => {
